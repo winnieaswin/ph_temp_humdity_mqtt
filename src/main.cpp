@@ -3,6 +3,8 @@
 #include <DHT.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <ESP32AnalogRead.h>
+#include <math.h>
 
 #include "soc/soc.h"          // Disable brownour problems
 #include "soc/rtc_cntl_reg.h" // Disable brownour problems
@@ -38,16 +40,22 @@ String S_ResetCount;
 //parameter ph
 int Int_phSensor; // ph sensor active or no active
 String S_phSensor;
-char phVol_char[8];
+char phVol_char[20];
+char phVol1d_char[20];
+char adc_char[20];
+int adc_int;
+
 const int phPin = 34; // adc on GPIO 34
 int sensorValue = 0;
 unsigned long int avgValue;
 float b;
 int buf[10], temp;
 float f_offsetCal;
+float phValue;
 char C_offsetCal[8];
 String S_offsetCal;
 float pHVol;
+float phVol1d;
 
 #define DHTPIN 23     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22 // DHT 11
@@ -98,6 +106,11 @@ char C_topic_t_Hostname[40] = "esp32/temp/";
 char C_topic_h_Hostname[40] = "esp32/hum/";
 char C_topic_dallas_t_Hostname[40] = "esp32/dallas_t/";
 char C_topic_ph_Hostname[40] = "esp32/ph/";
+char C_topic_ph_Vol[40] = "esp32/phVol/";
+char C_topic_ph_Vol1d[40] = "esp32/phVol1d/";
+char C_topic_adc[40] = "esp32/adc/";
+
+
 int Ledboard = 2;
 int mQtyFailCt = 5;
 int i = 5;  // variable for loop
@@ -306,7 +319,7 @@ void init_server() //Server init
 
   server.on("/reset", HTTP_GET, [](AsyncWebServerRequest *request) {
     writeFile(SPIFFS, "/resetCount.txt", "0");
-    writeFile(SPIFFS, "/offsetCal.txt", 0);
+    writeFile(SPIFFS, "/offsetCal.txt", "0");
 
     delay(10);
     ESP.restart();
@@ -468,20 +481,21 @@ void dallasRead()
 {
   sensors.requestTemperatures();
   dallas_t = sensors.getTempCByIndex(0);
-  if (dallas_t < 0)
+
+  if (dallas_t != DEVICE_DISCONNECTED_C)
   {
-    // delay(100);
-    // sensors.requestTemperatures();
-    // dallas_t = sensors.getTempCByIndex(0);
-    client.publish(C_topic_dallas_t_Hostname,"");
-  }
-  else if (dallas_t > 0)
-  {
-    dtostrf(dallas_t, 2, 2, dallas_t_char); // convertion float to string
+    dtostrf(dallas_t, 2, 2, dallas_t_char); // convertion float to char
     writeFile(SPIFFS, "/dallas_t.txt", dallas_t_char);
     client.publish(C_topic_dallas_t_Hostname, dallas_t_char);
     Serial.print("dallas_t: ");
     Serial.println(dallas_t_char);
+  }
+  else
+  {
+    // delay(100);
+    // sensors.requestTemperatures();
+    // dallas_t = sensors.getTempCByIndex(0);
+    client.publish(C_topic_dallas_t_Hostname, "");
   }
 }
 
@@ -560,31 +574,45 @@ void InternetphRead()
   }
 }
 
+void adcSetting()
+{
+  //analogSetCycles(100);
+  //analogSetSamples(samplect);
+  analogReadResolution(10);
+  adcAttachPin(phPin);
+}
 void phRead()
 {
   S_phSensor = readFile(SPIFFS, "/phSensor.txt");
   if (S_phSensor == "On")
   {
-    for (i = 0; i < samplect; i++)
+
+    adc_int = analogRead(phPin);
+    for(i=0, ,i<10, i++ )
     {
-      rawadc = rawadc + analogRead(phPin);
-      delay(10);
+      
     }
-    pHVol = (((rawadc / samplect) * 3.366) / 4096);
-    // ph = (rawadc/samplect)*0.00233489;
-    //  ph = (rawadc/samplect)-4925)/-275;
+    pHVol = float(adc_int) * 3.3 / 1023; //convertie in volt
+    // pHVol = adc.readVoltage();
     //https://www.mathportal.org/calculators/analytic-geometry/two-point-form-calculator.php
     // BNC to GND = 3000 (2,5V) & 7ph, Amonnique  1900 (1,65V) & 11ph
-    float adcValue = rawadc / samplect;
-    Serial.print("adcValue : ");
-    Serial.println(adcValue);
-    rawadc = 0;
-    Serial.print("v = ");
-    Serial.println(pHVol);
-    dtostrf(pHVol, 2, 3, phVol_char);
+    
+    phVol1d = round(pHVol*10.0)/10.0;
+    dtostrf(pHVol, 2, 2, phVol_char);
+    dtostrf(phVol1d,2,1,phVol1d_char);
+    itoa(adc_int,adc_char,4);
+
+    client.publish(C_topic_ph_Vol,phVol_char);
+    client.publish(C_topic_ph_Vol1d,phVol1d_char);
+    client.publish(C_topic_adc,adc_char);
+ 
+
     writeFile(SPIFFS, "/phVol.txt", phVol_char);
 
-    float phValue = -8.46 * (pHVol + f_offsetCal) + 21.33;
+    S_offsetCal = readFile(SPIFFS, "/offsetCal.txt");
+    f_offsetCal = S_offsetCal.toFloat();
+    phValue = -5.70 * phVol1d + (21.34 - f_offsetCal);
+    //float phValue = -4.17 * (pHVol + f_offsetCal) + 14.03;
     //float phValue = 7 + ((2.5 - pHVol) / 0.18);
     dtostrf(phValue, 2, 2, ph_char); // convertion float to string
     writeFile(SPIFFS, "/ph.txt", ph_char);
@@ -596,7 +624,7 @@ void phRead()
 
 void phCalibrate()
 {
-  f_offsetCal = 1.687 - pHVol; //devider resistor 330/680ohm 5V = 3.366V  / 2.5V = 1.687V
+  f_offsetCal = 6.86 - phValue; //devider resistor 330/680ohm 5V = 3.366V  / 2.5V = 1.687V
   dtostrf(f_offsetCal, 2, 3, C_offsetCal);
   writeFile(SPIFFS, "/offsetCal.txt", C_offsetCal);
   Serial.print("offset calibration: ");
@@ -694,12 +722,16 @@ void setup()
   strcat(C_topic_h_Hostname, C_idHostname);        //topic preparation
   strcat(C_topic_dallas_t_Hostname, C_idHostname); //topic preparation
   strcat(C_topic_ph_Hostname, C_idHostname);       //topic preparation
+  strcat(C_topic_ph_Vol, C_idHostname);
+  strcat(C_topic_ph_Vol1d, C_idHostname);
+  strcat(C_topic_adc,C_idHostname);
 
   //Init pin mode
   pinMode(Ledboard, OUTPUT);
   //OTA init
   init_OTA();
   timerAlarmEnable(timer);
+  adcSetting();
 }
 
 void loop()
