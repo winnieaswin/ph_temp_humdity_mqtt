@@ -23,6 +23,7 @@
 #include <stdio.h>
 
 void phCalibrate();
+void calibGnd();
 
 char t_char[8];
 char h_char[8];
@@ -41,9 +42,10 @@ String S_ResetCount;
 int Int_phSensor; // ph sensor active or no active
 String S_phSensor;
 char phVol_char[20];
-char phVol1d_char[20];
+char phVol2d_char[20];
 char adc_char[20];
 int adc_int;
+int totalSum = 0;
 
 const int phPin = 34; // adc on GPIO 34
 int sensorValue = 0;
@@ -52,10 +54,20 @@ float b;
 int buf[10], temp;
 float f_offsetCal;
 float phValue;
+float phValue2d;
 char C_offsetCal[8];
 String S_offsetCal;
 float pHVol;
 float phVol1d;
+float phVol2d;
+String S_EqA, S_EqB;
+char C_EqA[20], C_EqA1[20], C_EqA2[20], C_EqA3[20], C_EqB[20], C_EqB1[20], C_EqB2[20], C_EqB3[20];
+float EqA, EqA1, EqA2, EqA3, EqB, EqB1, EqB2, EqB3; //for equation
+String S_phVol4_01, S_phVol6_86, S_phVol9_18;
+float F_phVol4_01, F_phVol6_86, F_phVol9_18; //for equation
+float ph4_01 = 4.01;
+float ph6_86 = 6.86;
+float ph9_18 = 9.18; // for reference
 
 #define DHTPIN 23     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22 // DHT 11
@@ -63,10 +75,9 @@ DHT dht(DHTPIN, DHTTYPE);
 const int ledPin = 2; // ledPin refers to ESP32 GPIO 23
 
 #ifdef __cplusplus //config ph meter
-extern "C"
-{
+extern "C" {
 #endif
-  uint8_t temprature_sens_read();
+uint8_t temprature_sens_read();
 #ifdef __cplusplus
 }
 #endif
@@ -107,9 +118,8 @@ char C_topic_h_Hostname[40] = "esp32/hum/";
 char C_topic_dallas_t_Hostname[40] = "esp32/dallas_t/";
 char C_topic_ph_Hostname[40] = "esp32/ph/";
 char C_topic_ph_Vol[40] = "esp32/phVol/";
-char C_topic_ph_Vol1d[40] = "esp32/phVol1d/";
+char C_topic_ph_Vol2d[40] = "esp32/phVol2d/";
 char C_topic_adc[40] = "esp32/adc/";
-
 
 int Ledboard = 2;
 int mQtyFailCt = 5;
@@ -130,6 +140,12 @@ const char *PARAM_macAdress = "macAdress";
 const char *PARAM_idHostname = "idHostname";
 const char *PARAM_timeCycle = "timeCycle";
 const char *PARAM_offsetCal = "offsetCal";
+const char *PARAM_eqPhMeter = "eqPhMeter";
+const char *PARAM_eqA = "EqA";
+const char *PARAM_eqB = "EqB";
+const char *PARAM_phVol6_86 = "phVol6_86";
+const char *PARAM_phVol4_01 = "phVol4_01";
+const char *PARAM_phVol9_18 = "phVol9_18";
 
 int Int_timeCycle;
 
@@ -293,6 +309,50 @@ String processor(const String &var) //display value on http
     S_phSensor = readFile(SPIFFS, "/phSensor.txt");
     return readFile(SPIFFS, "/phSensor.txt");
   }
+  else if (var == "EqA")
+  {
+    return readFile(SPIFFS, "/EqA.txt");
+  }
+  else if (var == "EqA1")
+  {
+    return readFile(SPIFFS, "/EqA1.txt");
+  }
+  else if (var == "EqA2")
+  {
+    return readFile(SPIFFS, "/EqA2.txt");
+  }
+  else if (var == "EqA3")
+  {
+    return readFile(SPIFFS, "/EqA3.txt");
+  }
+  else if (var == "EqB")
+  {
+    return readFile(SPIFFS, "/EqB.txt");
+  }
+  else if (var == "EqB1")
+  {
+    return readFile(SPIFFS, "/EqB1.txt");
+  }
+  else if (var == "EqB2")
+  {
+    return readFile(SPIFFS, "/EqB2.txt");
+  }
+  else if (var == "EqB3")
+  {
+    return readFile(SPIFFS, "/EqB3.txt");
+  }
+  else if (var == "phVol4_01")
+  {
+    return readFile(SPIFFS, "/phVol4_01.txt");
+  }
+  else if (var == "phVol6_86")
+  {
+    return readFile(SPIFFS, "/phVol6_86.txt");
+  }
+  else if (var == "phVol9_18")
+  {
+    return readFile(SPIFFS, "/phVol9_18.txt");
+  }
 
   return String();
 }
@@ -346,6 +406,12 @@ void init_server() //Server init
 
     request->redirect("/");
   });
+  server.on("/calibGnd", HTTP_GET, [](AsyncWebServerRequest *request) {
+    calibGnd();
+    timerCount = 0;
+
+    request->redirect("/");
+  });
 
   // Send a GET request to <ESP_IP>/get?input1=<inputMessage>
   server.on("/get", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -367,6 +433,21 @@ void init_server() //Server init
     {
       inputMessage = request->getParam(PARAM_offsetCal)->value();
       writeFile(SPIFFS, "/offsetCal.txt", inputMessage.c_str());
+    }
+    else if (request->hasParam(PARAM_phVol4_01))
+    {
+      inputMessage = request->getParam(PARAM_phVol4_01)->value();
+      writeFile(SPIFFS, "/phVol4_01.txt", inputMessage.c_str());
+    }
+    else if (request->hasParam(PARAM_phVol6_86))
+    {
+      inputMessage = request->getParam(PARAM_phVol6_86)->value();
+      writeFile(SPIFFS, "/phVol6_86.txt", inputMessage.c_str());
+    }
+    else if (request->hasParam(PARAM_phVol9_18))
+    {
+      inputMessage = request->getParam(PARAM_phVol9_18)->value();
+      writeFile(SPIFFS, "/phVol9_18.txt", inputMessage.c_str());
     }
     else
     {
@@ -479,24 +560,26 @@ void init_OTA()
 
 void dallasRead()
 {
-  sensors.requestTemperatures();
-  dallas_t = sensors.getTempCByIndex(0);
-
-  if (dallas_t != DEVICE_DISCONNECTED_C)
+  int failRead = 0;
+  for (i = 0; i < samplect; i++)
   {
-    dtostrf(dallas_t, 2, 2, dallas_t_char); // convertion float to char
-    writeFile(SPIFFS, "/dallas_t.txt", dallas_t_char);
-    client.publish(C_topic_dallas_t_Hostname, dallas_t_char);
-    Serial.print("dallas_t: ");
-    Serial.println(dallas_t_char);
+    sensors.requestTemperatures();
+    if( sensors.getTempCByIndex(0) != DEVICE_DISCONNECTED_C)
+    {
+      dallas_t = dallas_t + sensors.getTempCByIndex(0);
+    }
+    else 
+    {
+      failRead ++ ;
+    }
   }
-  else
-  {
-    // delay(100);
-    // sensors.requestTemperatures();
-    // dallas_t = sensors.getTempCByIndex(0);
-    client.publish(C_topic_dallas_t_Hostname, "");
-  }
+  
+  dtostrf((dallas_t/(samplect-failRead)), 2, 2, dallas_t_char); // convertion float to char
+  writeFile(SPIFFS, "/dallas_t.txt", dallas_t_char);
+  client.publish(C_topic_dallas_t_Hostname, dallas_t_char);
+  Serial.print("dallas_t: ");
+  Serial.println(dallas_t_char);
+  dallas_t = 0;
 }
 
 void dhtRead()
@@ -531,104 +614,111 @@ void dhtRead()
   sensorfail = 0;
 }
 
-void InternetphRead()
-{
-  S_phSensor = readFile(SPIFFS, "/phSensor.txt");
-  if (S_phSensor == "On")
-  {
-    for (int i = 0; i < 10; i++)
-    {
-      buf[i] = analogRead(phPin);
-      Serial.print("AD = ");
-      Serial.println(buf[i]);
-      delay(10);
-    }
-    for (int i = 0; i < 9; i++)
-    {
-      for (int j = i + 1; j < 10; j++)
-      {
-        if (buf[i] > buf[j])
-        {
-          temp = buf[i];
-          buf[i] = buf[j];
-          buf[j] = temp;
-        }
-      }
-    }
-    avgValue = 0;
-    for (int i = 2; i < 8; i++)
-      avgValue += buf[i];
-    //float pHVol=(float)avgValue*5.0/1024/6;
-    float pHVol = (float)avgValue * 3.366 / 4096 / 6;
-    Serial.print("v = ");
-    Serial.println(pHVol);
-    dtostrf(pHVol, 2, 3, phVol_char);
-    writeFile(SPIFFS, "/phVol.txt", phVol_char);
-    float phValue = (-1000 / 241) * pHVol + 14;
-    //float phValue = 7 + ((2.5 - pHVol) / 0.18);
-    dtostrf(phValue, 2, 2, ph_char); // convertion float to string
-    writeFile(SPIFFS, "/ph.txt", ph_char);
-    Serial.print("ph: ");
-    Serial.println(phValue);
-    client.publish(C_topic_ph_Hostname, ph_char);
-  }
-}
-
 void adcSetting()
 {
-  //analogSetCycles(100);
-  //analogSetSamples(samplect);
   analogReadResolution(10);
   adcAttachPin(phPin);
 }
+void adcToVolt()
+{
+  for (i = 0; i < samplect; i++)
+  {
+    totalSum = totalSum + analogRead(phPin);
+    delay(20);
+  }
+  pHVol = float(totalSum / samplect) * 3.3 / 1023; //convertie in volt
+  writeFile(SPIFFS, "/phVol.txt", phVol_char);
+  totalSum = 0;
+  phVol2d = round(pHVol * 100.0) / 100.0;
+}
+
 void phRead()
 {
   S_phSensor = readFile(SPIFFS, "/phSensor.txt");
   if (S_phSensor == "On")
   {
-
-    adc_int = analogRead(phPin);
-    for(i=0, ,i<10, i++ )
-    {
-      
-    }
-    pHVol = float(adc_int) * 3.3 / 1023; //convertie in volt
-    // pHVol = adc.readVoltage();
-    //https://www.mathportal.org/calculators/analytic-geometry/two-point-form-calculator.php
-    // BNC to GND = 3000 (2,5V) & 7ph, Amonnique  1900 (1,65V) & 11ph
-    
-    phVol1d = round(pHVol*10.0)/10.0;
+    adcToVolt();
     dtostrf(pHVol, 2, 2, phVol_char);
-    dtostrf(phVol1d,2,1,phVol1d_char);
-    itoa(adc_int,adc_char,4);
+    dtostrf(phVol2d, 2, 2, phVol2d_char);
+    itoa(adc_int, adc_char, 4);
 
-    client.publish(C_topic_ph_Vol,phVol_char);
-    client.publish(C_topic_ph_Vol1d,phVol1d_char);
-    client.publish(C_topic_adc,adc_char);
- 
+    Serial.print("phVol :");
+    Serial.println(pHVol);
 
-    writeFile(SPIFFS, "/phVol.txt", phVol_char);
+    Serial.print("adc :");
+    Serial.println(adc_int);
+    client.publish(C_topic_ph_Vol, phVol_char);
+    client.publish(C_topic_ph_Vol2d, phVol2d_char);
+    client.publish(C_topic_adc, adc_char);
 
     S_offsetCal = readFile(SPIFFS, "/offsetCal.txt");
     f_offsetCal = S_offsetCal.toFloat();
-    phValue = -5.70 * phVol1d + (21.34 - f_offsetCal);
-    //float phValue = -4.17 * (pHVol + f_offsetCal) + 14.03;
-    //float phValue = 7 + ((2.5 - pHVol) / 0.18);
-    dtostrf(phValue, 2, 2, ph_char); // convertion float to string
+
+    S_EqA = readFile(SPIFFS, "/EqA.txt");
+    EqA = S_EqA.toFloat();
+    S_EqB = readFile(SPIFFS, "/EqB.txt");
+    EqB = S_EqB.toFloat();
+
+    phValue = EqA * pHVol + EqB + f_offsetCal;
+    //phValue2d = round(phValue * 10.0) / 10.0;
+
+    dtostrf(phValue, 2, 2, ph_char); // convertion float to Char
     writeFile(SPIFFS, "/ph.txt", ph_char);
-    Serial.print("ph: ");
-    Serial.println(phValue);
     client.publish(C_topic_ph_Hostname, ph_char);
   }
 }
 
-void phCalibrate()
+void calibGnd()
 {
-  f_offsetCal = 6.86 - phValue; //devider resistor 330/680ohm 5V = 3.366V  / 2.5V = 1.687V
+  f_offsetCal = 2.5 - pHVol;
   dtostrf(f_offsetCal, 2, 3, C_offsetCal);
   writeFile(SPIFFS, "/offsetCal.txt", C_offsetCal);
   Serial.print("offset calibration: ");
   Serial.println(C_offsetCal);
+}
+void phCalibrate() // equation y = ax+b with 3 points then average
+{
+  S_phVol4_01 = readFile(SPIFFS, "/phVol4_01.txt");
+  F_phVol4_01 = S_phVol4_01.toFloat();
+  S_phVol6_86 = readFile(SPIFFS, "/phVol6_86.txt");
+  F_phVol6_86 = S_phVol6_86.toFloat();
+  S_phVol9_18 = readFile(SPIFFS, "/phVol9_18.txt");
+  F_phVol9_18 = S_phVol9_18.toFloat();
+
+  EqA1 = (ph6_86 - ph4_01) / (F_phVol6_86 - F_phVol4_01);
+  dtostrf(EqA1, 10, 10, C_EqA1); // convertion float to char
+  writeFile(SPIFFS, "/EqA1.txt", C_EqA1);
+
+  EqA2 = (ph9_18 - ph6_86) / (F_phVol9_18 - F_phVol6_86);
+  dtostrf(EqA2, 10, 10, C_EqA2); // convertion float to char
+  writeFile(SPIFFS, "/EqA2.txt", C_EqA2);
+
+  EqA3 = (ph9_18 - ph4_01) / (F_phVol9_18 - F_phVol4_01);
+  dtostrf(EqA3, 10, 10, C_EqA3); // convertion float to char
+  writeFile(SPIFFS, "/EqA3.txt", C_EqA3);
+
+  EqB1 = ph4_01 - (EqA1 * F_phVol4_01);
+  dtostrf(EqB1, 10, 10, C_EqB1); // convertion float to char
+  writeFile(SPIFFS, "/EqB1.txt", C_EqB1);
+
+  EqB2 = ph6_86 - (EqA2 * F_phVol6_86);
+  dtostrf(EqB2, 10, 10, C_EqB2); // convertion float to char
+  writeFile(SPIFFS, "/EqB2.txt", C_EqB2);
+
+  EqB3 = ph9_18 - (EqA3 * F_phVol9_18);
+  dtostrf(EqB3, 10, 10, C_EqB3); // convertion float to char
+  writeFile(SPIFFS, "/EqB3.txt", C_EqB3);
+
+  EqA = (EqA1 + EqA2 + EqA3) / 3;
+  dtostrf(EqA, 10, 10, C_EqA); // coFnvertion float to char
+  writeFile(SPIFFS, "/EqA.txt", C_EqA);
+
+  EqB = (EqB1 + EqB2 + EqB3) / 3;
+  dtostrf(EqB, 10, 10, C_EqB); // coFnvertion float to char
+  writeFile(SPIFFS, "/EqB.txt", C_EqB);
+
+  Serial.print("Equation B: ");
+  Serial.println(C_EqB);
 }
 
 void checkConnection()
@@ -636,7 +726,7 @@ void checkConnection()
   if (WiFi.status() == WL_CONNECTED)
   {
     delay(10);
-    Serial.println("Wifi Connected");
+    //Serial.println("Wifi Connected");
     y = 10;
   }
   else if ((WiFi.status() != WL_CONNECTED) && (y > 0))
@@ -723,8 +813,7 @@ void setup()
   strcat(C_topic_dallas_t_Hostname, C_idHostname); //topic preparation
   strcat(C_topic_ph_Hostname, C_idHostname);       //topic preparation
   strcat(C_topic_ph_Vol, C_idHostname);
-  strcat(C_topic_ph_Vol1d, C_idHostname);
-  strcat(C_topic_adc,C_idHostname);
+  strcat(C_topic_adc, C_idHostname);
 
   //Init pin mode
   pinMode(Ledboard, OUTPUT);
@@ -758,8 +847,8 @@ void loop()
     S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
     Int_timeCycle = S_timeCycle.toInt();
     flagEx = false;
-    Serial.print("timerCount_b: ");
-    Serial.println(timerCount);
+    // Serial.print("timerCount_b: ");
+    // Serial.println(timerCount);
     timer1s++;
   }
 

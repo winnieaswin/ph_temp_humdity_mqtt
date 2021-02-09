@@ -31,9 +31,26 @@
         <p>pH : <strong> %ph% </strong></p>
         <p>pH voltage : <strong>%phVol%</strong></p>
         <p>pH offset voltage : <strong>%offsetCal%</strong> </p>
+        <p>Equation a1 : <strong>%EqA1%</strong> Equation a2 : <strong>%EqA2%</strong> Equation a3 : <strong>%EqA3%</strong> </p>
+        <p>Equation b : <strong>%EqB1%</strong> Equation b2 : <strong>%EqB2%</strong> Equation b3 : <strong>%EqB3%</strong></p>
+        <p>Equation a moyenne : <strong>%EqA%</strong> </p>
+        <p>Equation b moyenne : <strong>%EqB%</strong> </p>
+
         <p>Timer Count : <strong> %timerCount% </strong></p>
         <p>Reset count : <strong> %resetCount%</strong></p>
 
+        <form action="/get" target="hidden-form">
+            Voltage for ph4.01 : %phVol4_01% <input type="text" name="phVol4_01">
+            <input type="submit" value="Submit" onclick=" submitMessage()">
+        </form><br>
+        <form action="/get" target="hidden-form">
+            Voltage for ph6.86 : %phVol6_86% <input type="text" name="phVol6_86">
+            <input type="submit" value="Submit" onclick=" submitMessage()">
+        </form><br>
+        <form action="/get" target="hidden-form">
+            Voltage for ph9.18 : %phVol9_18% <input type="text" name="phVol9_18">
+            <input type="submit" value="Submit" onclick=" submitMessage()">
+        </form><br>
 
         <form action="/get" target="hidden-form">
             Hostname(save & reset to change) : %idHostname% <input type="text" name="idHostname">
@@ -53,6 +70,7 @@
             <tr>
                 <th><a href="/"><button class="button">Save data</button> </a></th>
                 <th><a href="/reset"><button class="button"> RESET </button></a></th>
+                <th><a href="/calibGnd"><button class="button">calibrate on ground </button></a><br></th>
             </tr>
         </table>
 
