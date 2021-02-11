@@ -160,14 +160,14 @@ AsyncWebServer server(80);
 //SPIFFS read & write
 String readFile(fs::FS &fs, const char *path)
 {
-  Serial.printf("Reading file: %s\r\n", path);
+  //Serial.printf("Reading file: %s\r\n", path);
   File file = fs.open(path, "r");
   if (!file || file.isDirectory())
   {
-    Serial.println("- empty file or failed to open file");
+  //Serial.println("- empty file or failed to open file");
     return String();
   }
-  Serial.println("- read from file:");
+  //Serial.println("- read from file:");
   String fileContent;
   while (file.available())
   {
@@ -176,7 +176,25 @@ String readFile(fs::FS &fs, const char *path)
   Serial.println(fileContent);
   return fileContent;
 }
-
+//SPIFFS read & write
+void writeFile(fs::FS &fs, const char *path, const char *message)
+{
+  //Serial.printf("Writing file: %s\r\n", path);
+  File file = fs.open(path, "w");
+  if (!file)
+  {
+    //Serial.println("- failed to open file for writing");
+    return;
+  }
+  if (file.print(message))
+  {
+    //Serial.println("- file written");
+  }
+  else
+  {
+    //Serial.println("- write failed");
+  }
+}
 bool init_wifi()
 {
   int connAttempts = 0;
@@ -223,25 +241,7 @@ void init_time()
   }
 }
 
-//SPIFFS read & write
-void writeFile(fs::FS &fs, const char *path, const char *message)
-{
-  Serial.printf("Writing file: %s\r\n", path);
-  File file = fs.open(path, "w");
-  if (!file)
-  {
-    Serial.println("- failed to open file for writing");
-    return;
-  }
-  if (file.print(message))
-  {
-    Serial.println("- file written");
-  }
-  else
-  {
-    Serial.println("- write failed");
-  }
-}
+
 //Processor read back to value on website
 String processor(const String &var) //display value on http
 {
@@ -353,6 +353,10 @@ String processor(const String &var) //display value on http
   {
     return readFile(SPIFFS, "/phVol9_18.txt");
   }
+  else if (var == "CalDate")
+  {
+    return readFile(SPIFFS, "/CalDate.txt");
+  }
 
   return String();
 }
@@ -403,7 +407,7 @@ void init_server() //Server init
   server.on("/calibrate", HTTP_GET, [](AsyncWebServerRequest *request) {
     phCalibrate();
     timerCount = 0;
-
+    writeFile(SPIFFS, "/CalDate.txt", strftime_buf);
     request->redirect("/");
   });
   server.on("/calibGnd", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -561,20 +565,22 @@ void init_OTA()
 void dallasRead()
 {
   int failRead = 0;
+  float dallas_r;
   for (i = 0; i < samplect; i++)
   {
     sensors.requestTemperatures();
-    if( sensors.getTempCByIndex(0) != DEVICE_DISCONNECTED_C)
+    dallas_r = sensors.getTempCByIndex(0);
+    if (dallas_r != DEVICE_DISCONNECTED_C)
     {
-      dallas_t = dallas_t + sensors.getTempCByIndex(0);
+      dallas_t = dallas_t + dallas_r;
     }
-    else 
+    else
     {
-      failRead ++ ;
+      failRead++;
     }
   }
-  
-  dtostrf((dallas_t/(samplect-failRead)), 2, 2, dallas_t_char); // convertion float to char
+
+  dtostrf((dallas_t / (samplect - failRead)), 2, 2, dallas_t_char); // convertion float to char
   writeFile(SPIFFS, "/dallas_t.txt", dallas_t_char);
   client.publish(C_topic_dallas_t_Hostname, dallas_t_char);
   Serial.print("dallas_t: ");
@@ -847,8 +853,15 @@ void loop()
     S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
     Int_timeCycle = S_timeCycle.toInt();
     flagEx = false;
-    // Serial.print("timerCount_b: ");
-    // Serial.println(timerCount);
+    if (digitalRead(ledPin) == HIGH)
+    {
+      digitalWrite(ledPin, LOW);
+    }
+    else
+    {
+      digitalWrite(ledPin, HIGH);
+    }
+
     timer1s++;
   }
 
