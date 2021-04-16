@@ -22,6 +22,29 @@
 #include <string.h>
 #include <stdio.h>
 
+// // filter FIR
+// #include <Arduino_Helpers.h>
+// #include <AH/Hardware/FilteredAnalog.hpp>
+// // Create a filtered analog object on pin A0:
+// FilteredAnalog<10,       // Output precision in bits
+//                2,        // The amount of filtering
+//                uint16_t, // The integer type for the filter calculations
+//                analog_t  // The integer type for the upscaled analog values
+//                >
+//     analog = A6;
+
+// SMA
+// #include <Filters.h>
+
+// #include <AH/STL/cmath>                    // std::round
+// #include <AH/Timing/MillisMicrosTimer.hpp> // Timer
+// #include <Filters/SMA.hpp>                 // SMA (Simple Moving Average)
+// smooth
+#include <Smoothed.h>
+Smoothed<float> mySensor;
+float smoothedSensorValueAvg;
+float totalSum;
+
 void phCalibrate();
 void calibGnd();
 
@@ -38,16 +61,13 @@ unsigned int timer1s;
 unsigned int intResetCount;
 String S_ResetCount;
 
-//parameter ph
+// parameter ph
 int Int_phSensor; // ph sensor active or no active
 String S_phSensor;
 char phVol_char[20];
-char phVol2d_char[20];
-char adc_char[20];
-int adc_int;
-int totalSum = 0;
+// for FIR
+float phVol = 0.0;
 
-const int phPin = 34; // adc on GPIO 34
 int sensorValue = 0;
 unsigned long int avgValue;
 float b;
@@ -61,20 +81,24 @@ float pHVol;
 float phVol1d;
 float phVol2d;
 String S_EqA, S_EqB;
-char C_EqA[20], C_EqA1[20], C_EqA2[20], C_EqA3[20], C_EqB[20], C_EqB1[20], C_EqB2[20], C_EqB3[20];
-float EqA, EqA1, EqA2, EqA3, EqB, EqB1, EqB2, EqB3; //for equation
+char C_EqA[20], C_EqA1[20], C_EqA2[20], C_EqA3[20], C_EqB[20], C_EqB1[20],
+    C_EqB2[20], C_EqB3[20];
+float EqA, EqA1, EqA2, EqA3, EqB, EqB1, EqB2, EqB3; // for equation
 String S_phVol4_01, S_phVol6_86, S_phVol9_18;
-float F_phVol4_01, F_phVol6_86, F_phVol9_18; //for equation
+float F_phVol4_01, F_phVol6_86, F_phVol9_18; // for equation
 float ph4_01 = 4.01;
 float ph6_86 = 6.86;
 float ph9_18 = 9.18; // for reference
+char C_addOffset;    // for additional offset
+String S_addOffset;
+float F_addOffset;
 
 #define DHTPIN 23     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22 // DHT 11
 DHT dht(DHTPIN, DHTTYPE);
 const int ledPin = 2; // ledPin refers to ESP32 GPIO 23
-
-#ifdef __cplusplus //config ph meter
+const int phPin = 34; // adc on GPIO 34
+#ifdef __cplusplus    // config ph meter
 extern "C" {
 #endif
 uint8_t temprature_sens_read();
@@ -83,21 +107,22 @@ uint8_t temprature_sens_read();
 #endif
 uint8_t temprature_sens_read();
 #define ONE_WIRE_BUS 15
-// Setup PT100 a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
+// Setup PT100 a oneWire instance to communicate with any OneWire devices (not
+// just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
 // Pass our oneWire reference to Dallas Temperature.
 DallasTemperature sensors(&oneWire);
 
-//timer interrupt
+// timer interrupt
 volatile int interruptCounter;
-int timerCount; //test statement for each step in second
+int timerCount; // test statement for each step in second
 char c_timerCount[8];
 boolean flagEx = false; // flag to excute 1 time the statement
 
 hw_timer_t *timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
-//mqtt configuration
+// mqtt configuration
 const char *mqtt_server = "192.168.0.50";
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -109,9 +134,9 @@ const char *password = "Pi@Riya*1";
 bool internet_connected = false;
 struct tm timeinfo;
 time_t now;
-char strftime_buf[64];              //time for webserver
-char C_ip_adress[14] = "IP adress"; //for Mqtt ID
-char C_mac_adr[18];                 //for Mqtt ID
+char strftime_buf[64];              // time for webserver
+char C_ip_adress[14] = "IP adress"; // for Mqtt ID
+char C_mac_adr[18];                 // for Mqtt ID
 char C_idHostname[40];
 char C_topic_t_Hostname[40] = "esp32/temp/";
 char C_topic_h_Hostname[40] = "esp32/hum/";
@@ -124,9 +149,9 @@ char C_topic_adc[40] = "esp32/adc/";
 int Ledboard = 2;
 int mQtyFailCt = 5;
 int i = 5;  // variable for loop
-int y = 10; //variable for wifi reset
+int y = 10; // variable for wifi reset
 
-//my time
+// my time
 // int day, hours, minutes, seconds, year, month, date, minuteSave;
 // WiFiUDP ntpUDP;
 // NTPClient timeClient(ntpUDP, "0.pool.ntp.org", 25200, 0);
@@ -134,7 +159,7 @@ const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 25200;
 const int daylightOffset_sec = 0;
 
-//variable for webserver
+// variable for webserver
 const char *PARAM_ipAdress = "ipAdress";
 const char *PARAM_macAdress = "macAdress";
 const char *PARAM_idHostname = "idHostname";
@@ -146,6 +171,7 @@ const char *PARAM_eqB = "EqB";
 const char *PARAM_phVol6_86 = "phVol6_86";
 const char *PARAM_phVol4_01 = "phVol4_01";
 const char *PARAM_phVol9_18 = "phVol9_18";
+const char *PARAM_addOffset = "addOffset";
 
 int Int_timeCycle;
 
@@ -157,46 +183,38 @@ String S_timeCycle;
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 
-//SPIFFS read & write
-String readFile(fs::FS &fs, const char *path)
-{
-  //Serial.printf("Reading file: %s\r\n", path);
+void adcToVolt();
+// SPIFFS read & write
+String readFile(fs::FS &fs, const char *path) {
+  // Serial.printf("Reading file: %s\r\n", path);
   File file = fs.open(path, "r");
-  if (!file || file.isDirectory())
-  {
-  //Serial.println("- empty file or failed to open file");
+  if (!file || file.isDirectory()) {
+    // Serial.println("- empty file or failed to open file");
     return String();
   }
-  //Serial.println("- read from file:");
+  // Serial.println("- read from file:");
   String fileContent;
-  while (file.available())
-  {
+  while (file.available()) {
     fileContent += String((char)file.read());
   }
   Serial.println(fileContent);
   return fileContent;
 }
-//SPIFFS read & write
-void writeFile(fs::FS &fs, const char *path, const char *message)
-{
-  //Serial.printf("Writing file: %s\r\n", path);
+// SPIFFS read & write
+void writeFile(fs::FS &fs, const char *path, const char *message) {
+  // Serial.printf("Writing file: %s\r\n", path);
   File file = fs.open(path, "w");
-  if (!file)
-  {
-    //Serial.println("- failed to open file for writing");
+  if (!file) {
+    // Serial.println("- failed to open file for writing");
     return;
   }
-  if (file.print(message))
-  {
-    //Serial.println("- file written");
-  }
-  else
-  {
-    //Serial.println("- write failed");
+  if (file.print(message)) {
+    // Serial.println("- file written");
+  } else {
+    // Serial.println("- write failed");
   }
 }
-bool init_wifi()
-{
+bool init_wifi() {
   int connAttempts = 0;
   Serial.println("\r\nConnecting to: " + String(ssid));
   WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
@@ -206,8 +224,7 @@ bool init_wifi()
   WiFi.setHostname(C_idHostname);
   WiFi.begin(ssid, password);
 
-  while (WiFi.status() != WL_CONNECTED)
-  {
+  while (WiFi.status() != WL_CONNECTED) {
     delay(2000);
     Serial.print(".");
     if (connAttempts > 10)
@@ -217,12 +234,10 @@ bool init_wifi()
   return true;
 }
 
-void init_time()
-{
+void init_time() {
   struct tm timeinfo;
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  if (!getLocalTime(&timeinfo))
-  {
+  if (!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time");
     return;
   }
@@ -232,149 +247,97 @@ void init_time()
   timeinfo = {0};
   int retry = 0;
   const int retry_count = 10;
-  while (timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count)
-  {
-    Serial.printf("Waiting for system time to be set... (%d/%d)\n", retry, retry_count);
+  while (timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count) {
+    Serial.printf("Waiting for system time to be set... (%d/%d)\n", retry,
+                  retry_count);
     delay(2000);
     time(&now);
     localtime_r(&now, &timeinfo);
   }
 }
 
-
-//Processor read back to value on website
-String processor(const String &var) //display value on http
+// Processor read back to value on website
+String processor(const String &var) // display value on http
 {
-  if (var == "idHostname")
-  {
+  if (var == "idHostname") {
     S_idHostname = readFile(SPIFFS, "/idHostname.txt");
     return readFile(SPIFFS, "/idHostname.txt");
-  }
-  else if (var == "timeNow")
-  {
+  } else if (var == "timeNow") {
     time(&now);
     localtime_r(&now, &timeinfo);
     strftime(strftime_buf, sizeof(strftime_buf), "%F_%H_%M_%S", &timeinfo);
     return String(strftime_buf);
-  }
-  else if (var == "ipAdress")
-  {
+  } else if (var == "ipAdress") {
     return String(WiFi.localIP().toString());
-  }
-  else if (var == "macAdress")
-  {
+  } else if (var == "macAdress") {
     return String(WiFi.macAddress());
-  }
-  else if (var == "resetCount")
-  {
+  } else if (var == "resetCount") {
     return readFile(SPIFFS, "/resetCount.txt");
-  }
-  else if (var == "timeCycle")
-  {
+  } else if (var == "timeCycle") {
     S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
     return readFile(SPIFFS, "/timeCycle.txt");
-  }
-  else if (var == "t")
-  {
-
+  } else if (var == "t") {
     return readFile(SPIFFS, "/t.txt");
-  }
-  else if (var == "h")
-  {
+  } else if (var == "h") {
     return readFile(SPIFFS, "/h.txt");
-  }
-  else if (var == "dallas_t")
-  {
+  } else if (var == "dallas_t") {
     return readFile(SPIFFS, "/dallas_t.txt");
-  }
-  else if (var == "ph")
-  {
+  } else if (var == "ph") {
     return readFile(SPIFFS, "/ph.txt");
-  }
-  else if (var == "phVol")
-  {
+  } else if (var == "phVol") {
     return readFile(SPIFFS, "/phVol.txt");
-  }
-  else if (var == "offsetCal")
-  {
+  } else if (var == "offsetCal") {
     S_offsetCal = readFile(SPIFFS, "/offsetCal.txt");
     return readFile(SPIFFS, "/offsetCal.txt");
-  }
-  else if (var == "timerCount")
-  {
+  } else if (var == "timerCount") {
     return readFile(SPIFFS, "/timerCount.txt");
-  }
-  else if (var == "phSensor")
-  {
+  } else if (var == "phSensor") {
     S_phSensor = readFile(SPIFFS, "/phSensor.txt");
     return readFile(SPIFFS, "/phSensor.txt");
-  }
-  else if (var == "EqA")
-  {
+  } else if (var == "EqA") {
     return readFile(SPIFFS, "/EqA.txt");
-  }
-  else if (var == "EqA1")
-  {
+  } else if (var == "EqA1") {
     return readFile(SPIFFS, "/EqA1.txt");
-  }
-  else if (var == "EqA2")
-  {
+  } else if (var == "EqA2") {
     return readFile(SPIFFS, "/EqA2.txt");
-  }
-  else if (var == "EqA3")
-  {
+  } else if (var == "EqA3") {
     return readFile(SPIFFS, "/EqA3.txt");
-  }
-  else if (var == "EqB")
-  {
+  } else if (var == "EqB") {
     return readFile(SPIFFS, "/EqB.txt");
-  }
-  else if (var == "EqB1")
-  {
+  } else if (var == "EqB1") {
     return readFile(SPIFFS, "/EqB1.txt");
-  }
-  else if (var == "EqB2")
-  {
+  } else if (var == "EqB2") {
     return readFile(SPIFFS, "/EqB2.txt");
-  }
-  else if (var == "EqB3")
-  {
+  } else if (var == "EqB3") {
     return readFile(SPIFFS, "/EqB3.txt");
-  }
-  else if (var == "phVol4_01")
-  {
+  } else if (var == "phVol4_01") {
     return readFile(SPIFFS, "/phVol4_01.txt");
-  }
-  else if (var == "phVol6_86")
-  {
+  } else if (var == "phVol6_86") {
     return readFile(SPIFFS, "/phVol6_86.txt");
-  }
-  else if (var == "phVol9_18")
-  {
+  } else if (var == "phVol9_18") {
     return readFile(SPIFFS, "/phVol9_18.txt");
-  }
-  else if (var == "CalDate")
-  {
+  } else if (var == "CalDate") {
     return readFile(SPIFFS, "/CalDate.txt");
+  } else if (var == "addOffset") {
+    return readFile(SPIFFS, "/addOffset.txt");
   }
 
   return String();
 }
 
-void init_server() //Server init
+void init_server() // Server init
 {
   File file = SPIFFS.open("/index.html", "r");
-  if (!file)
-  {
+  if (!file) {
     Serial.println("file open failed");
   }
   // Route for root / web page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(SPIFFS, "/index.html", String(), false, processor);
   });
-  //Read hostname
+  // Read hostname
   S_idHostname = readFile(SPIFFS, "/idHostname.txt");
-  //Read timeCycle
+  // Read timeCycle
   S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
   Int_timeCycle = S_timeCycle.toInt();
 
@@ -423,99 +386,77 @@ void init_server() //Server init
     // String inputParam; //no used
     // GET timeBetween value on <ESP_IP>/get?timeBetween=<inputMessage>
 
-    if (request->hasParam(PARAM_idHostname))
-    {
+    if (request->hasParam(PARAM_idHostname)) {
       inputMessage = request->getParam(PARAM_idHostname)->value();
       writeFile(SPIFFS, "/idHostname.txt", inputMessage.c_str());
-    }
-    else if (request->hasParam(PARAM_timeCycle))
-    {
+    } else if (request->hasParam(PARAM_timeCycle)) {
       inputMessage = request->getParam(PARAM_timeCycle)->value();
       writeFile(SPIFFS, "/timeCycle.txt", inputMessage.c_str());
-    }
-    else if (request->hasParam(PARAM_offsetCal))
-    {
+    } else if (request->hasParam(PARAM_offsetCal)) {
       inputMessage = request->getParam(PARAM_offsetCal)->value();
       writeFile(SPIFFS, "/offsetCal.txt", inputMessage.c_str());
-    }
-    else if (request->hasParam(PARAM_phVol4_01))
-    {
+    } else if (request->hasParam(PARAM_phVol4_01)) {
       inputMessage = request->getParam(PARAM_phVol4_01)->value();
       writeFile(SPIFFS, "/phVol4_01.txt", inputMessage.c_str());
-    }
-    else if (request->hasParam(PARAM_phVol6_86))
-    {
+    } else if (request->hasParam(PARAM_phVol6_86)) {
       inputMessage = request->getParam(PARAM_phVol6_86)->value();
       writeFile(SPIFFS, "/phVol6_86.txt", inputMessage.c_str());
-    }
-    else if (request->hasParam(PARAM_phVol9_18))
-    {
+    } else if (request->hasParam(PARAM_phVol9_18)) {
       inputMessage = request->getParam(PARAM_phVol9_18)->value();
       writeFile(SPIFFS, "/phVol9_18.txt", inputMessage.c_str());
-    }
-    else
-    {
+    } else if (request->hasParam(PARAM_addOffset)) {
+      inputMessage = request->getParam(PARAM_addOffset)->value();
+      writeFile(SPIFFS, "/addOffset.txt", inputMessage.c_str());
+    } else {
       inputMessage = "No message sent";
     }
     request->send(200, "text/text", inputMessage);
   });
   server.begin();
-} //end Server init
+} // end Server init
 // call back mqtt
-void callback(char *topic, byte *payload, unsigned int length)
-{
+void callback(char *topic, byte *payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
   String messageTemp;
-  for (int i = 0; i < length; i++)
-  {
+  for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
   // Switch on the LED if an 1 was received as first character
-  if (String(topic) == "esp32/output")
-  {
+  if (String(topic) == "esp32/output") {
     Serial.print("Changing output to ");
-    if (messageTemp == "on")
-    {
+    if (messageTemp == "on") {
       Serial.println("on");
       digitalWrite(Ledboard, HIGH);
-    }
-    else if (messageTemp == "off")
-    {
+    } else if (messageTemp == "off") {
       Serial.println("off");
       digitalWrite(Ledboard, LOW);
     }
   }
 }
 
-void reconnect() //reconnect mqtt server
+void reconnect() // reconnect mqtt server
 {
   // Loop until we're reconnected
-  while (!client.connected() && (mQtyFailCt >= 0))
-  {
+  while (!client.connected() && (mQtyFailCt >= 0)) {
     Serial.print("Attempting MQTT connection...");
     // Create a random client ID
     String clientId = C_idHostname;
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
-    if (client.connect(clientId.c_str()))
-    {
+    if (client.connect(clientId.c_str())) {
       Serial.println("connected");
       // Once connected, publish an announcement...
       client.publish("outTopic", "hello world");
       // ... and resubscribe
       client.subscribe("esp32/output");
       mQtyFailCt = 5;
-    }
-    else if (mQtyFailCt == 0)
-    {
+    } else if (mQtyFailCt == 0) {
       Serial.println("Mqtt fail 5 time restart esp32");
       ESP.restart();
-    }
-    else
-    {
+    } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
@@ -525,9 +466,8 @@ void reconnect() //reconnect mqtt server
     }
   }
 }
-//code OTA
-void init_OTA()
-{
+// code OTA
+void init_OTA() {
   ArduinoOTA
       .onStart([]() {
         String type;
@@ -536,12 +476,11 @@ void init_OTA()
         else // U_SPIFFS
           type = "filesystem";
 
-        // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+        // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS
+        // using SPIFFS.end()
         Serial.println("Start updating " + type);
       })
-      .onEnd([]() {
-        Serial.println("\nEnd");
-      })
+      .onEnd([]() { Serial.println("\nEnd"); })
       .onProgress([](unsigned int progress, unsigned int total) {
         Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
       })
@@ -562,25 +501,21 @@ void init_OTA()
   ArduinoOTA.begin();
 }
 
-void dallasRead()
-{
+void dallasRead() {
   int failRead = 0;
   float dallas_r;
-  for (i = 0; i < samplect; i++)
-  {
+  for (i = 0; i < samplect; i++) {
     sensors.requestTemperatures();
     dallas_r = sensors.getTempCByIndex(0);
-    if (dallas_r != DEVICE_DISCONNECTED_C)
-    {
+    if (dallas_r != DEVICE_DISCONNECTED_C) {
       dallas_t = dallas_t + dallas_r;
-    }
-    else
-    {
+    } else {
       failRead++;
     }
   }
 
-  dtostrf((dallas_t / (samplect - failRead)), 2, 2, dallas_t_char); // convertion float to char
+  dtostrf((dallas_t / (samplect - failRead)), 2, 2,
+          dallas_t_char); // convertion float to char
   writeFile(SPIFFS, "/dallas_t.txt", dallas_t_char);
   client.publish(C_topic_dallas_t_Hostname, dallas_t_char);
   Serial.print("dallas_t: ");
@@ -588,8 +523,7 @@ void dallasRead()
   dallas_t = 0;
 }
 
-void dhtRead()
-{
+void dhtRead() {
   h = dht.readHumidity();
   dtostrf(h, 2, 2, h_char); // convertion float to string
   writeFile(SPIFFS, "/h.txt", h_char);
@@ -597,8 +531,7 @@ void dhtRead()
   dtostrf(t, 2, 2, t_char); // convertion float to string
   writeFile(SPIFFS, "/t.txt", t_char);
 
-  if (isnan(h) || isnan(t))
-  {
+  if (isnan(h) || isnan(t)) {
     Serial.println("Failed to read from DHT sensor!");
     delay(2000);
     sensorfail = 1;
@@ -619,43 +552,31 @@ void dhtRead()
   delay(200);
   sensorfail = 0;
 }
+void adcToVolt() {
 
-void adcSetting()
-{
-  analogReadResolution(10);
-  adcAttachPin(phPin);
-}
-void adcToVolt()
-{
-  for (i = 0; i < samplect; i++)
-  {
-    totalSum = totalSum + analogRead(phPin);
-    delay(20);
-  }
-  pHVol = float(totalSum / samplect) * 3.3 / 1023; //convertie in volt
-  writeFile(SPIFFS, "/phVol.txt", phVol_char);
-  totalSum = 0;
-  phVol2d = round(pHVol * 100.0) / 100.0;
-}
+  totalSum = analogRead(phPin);
+  mySensor.add(totalSum);
+  smoothedSensorValueAvg = mySensor.get();
 
-void phRead()
-{
+  phVol = smoothedSensorValueAvg * 3.3 / 1023; // convertie in volt
+  // totalSum = 0;
+  // if (analog.update()) {
+  //   phVolFIR = float(analog.getValue() * 3.3 / 1023);
+  // }
+}
+void phRead() {
   S_phSensor = readFile(SPIFFS, "/phSensor.txt");
-  if (S_phSensor == "On")
-  {
-    adcToVolt();
-    dtostrf(pHVol, 2, 2, phVol_char);
-    dtostrf(phVol2d, 2, 2, phVol2d_char);
-    itoa(adc_int, adc_char, 4);
+  if (S_phSensor == "On") {
 
-    Serial.print("phVol :");
-    Serial.println(pHVol);
-
-    Serial.print("adc :");
-    Serial.println(adc_int);
+    Serial.print("totalSum :");
+    Serial.println(totalSum);
+    Serial.print("smoothedSensorValueAvg :");
+    Serial.println(smoothedSensorValueAvg);
+    Serial.print("pHVol :");
+    Serial.println(phVol);
+    dtostrf(phVol, 2, 2, phVol_char);
+    writeFile(SPIFFS, "/phVol.txt", phVol_char);
     client.publish(C_topic_ph_Vol, phVol_char);
-    client.publish(C_topic_ph_Vol2d, phVol2d_char);
-    client.publish(C_topic_adc, adc_char);
 
     S_offsetCal = readFile(SPIFFS, "/offsetCal.txt");
     f_offsetCal = S_offsetCal.toFloat();
@@ -664,9 +585,11 @@ void phRead()
     EqA = S_EqA.toFloat();
     S_EqB = readFile(SPIFFS, "/EqB.txt");
     EqB = S_EqB.toFloat();
+    S_addOffset = readFile(SPIFFS, "/addOffset.txt");
+    F_addOffset = S_addOffset.toFloat();
 
-    phValue = EqA * pHVol + EqB + f_offsetCal;
-    //phValue2d = round(phValue * 10.0) / 10.0;
+    phValue = EqA * phVol + EqB + f_offsetCal + F_addOffset;
+    // phValue2d = round(phValue * 10.0) / 10.0;
 
     dtostrf(phValue, 2, 2, ph_char); // convertion float to Char
     writeFile(SPIFFS, "/ph.txt", ph_char);
@@ -674,9 +597,8 @@ void phRead()
   }
 }
 
-void calibGnd()
-{
-  f_offsetCal = 2.5 - pHVol;
+void calibGnd() {
+  f_offsetCal = 2.5 - phVol;
   dtostrf(f_offsetCal, 2, 3, C_offsetCal);
   writeFile(SPIFFS, "/offsetCal.txt", C_offsetCal);
   Serial.print("offset calibration: ");
@@ -722,71 +644,57 @@ void phCalibrate() // equation y = ax+b with 3 points then average
   EqB = (EqB1 + EqB2 + EqB3) / 3;
   dtostrf(EqB, 10, 10, C_EqB); // coFnvertion float to char
   writeFile(SPIFFS, "/EqB.txt", C_EqB);
-
-  Serial.print("Equation B: ");
-  Serial.println(C_EqB);
 }
 
-void checkConnection()
-{
-  if (WiFi.status() == WL_CONNECTED)
-  {
+void checkConnection() {
+  if (WiFi.status() == WL_CONNECTED) {
     delay(10);
-    //Serial.println("Wifi Connected");
+    // Serial.println("Wifi Connected");
     y = 10;
-  }
-  else if ((WiFi.status() != WL_CONNECTED) && (y > 0))
-  {
+  } else if ((WiFi.status() != WL_CONNECTED) && (y > 0)) {
     WiFi.reconnect();
     delay(100);
     Serial.print("Wifi no connected : ");
     Serial.println(y);
-    --y; //decrease in interrupt
-  }
-  else if (y == 0)
-  {
+    --y; // decrease in interrupt
+  } else if (y == 0) {
     Serial.println("Wifi No Connected need to reboot");
     S_ResetCount = readFile(SPIFFS, "/resetCount.txt");
     intResetCount = S_ResetCount.toInt() + 1;
-    writeFile(SPIFFS, "/resetCount.txt", itoa(intResetCount, charResetCount, 10));
+    writeFile(SPIFFS, "/resetCount.txt",
+              itoa(intResetCount, charResetCount, 10));
     ESP.restart();
   }
 }
 
-void IRAM_ATTR onTimer()
-{
+void IRAM_ATTR onTimer() {
   portENTER_CRITICAL_ISR(&timerMux);
   interruptCounter++;
   portEXIT_CRITICAL_ISR(&timerMux);
 }
 
-void setup()
-{
+void setup() {
   // put your setup code here, to run once:
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disable brownout detector
 
   pinMode(ledPin, OUTPUT);
   Serial.begin(115200);
-  sensors.begin(); //dallas start
+  sensors.begin(); // dallas start
   dht.begin();
-  //EEPROM.begin(EEPROM_SIZE);
+  // EEPROM.begin(EEPROM_SIZE);
   // adcAttachPin(34);
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, &onTimer, true);
-  timerAlarmWrite(timer, 1000000, true);
+  timerAlarmWrite(timer, 1000, true);
   Serial.write("Hello world");
-  if (!SPIFFS.begin(true))
-  {
+  if (!SPIFFS.begin(true)) {
     Serial.println("An Error has occurred while mounting SPIFFS");
     ESP.restart();
-  }
-  else
-  {
+  } else {
     delay(500);
     Serial.println("SPIFFS mounted successfully");
   }
-  if (init_wifi())
-  { // Connected to WiFi
+  if (init_wifi()) { // Connected to WiFi
     internet_connected = true;
     Serial.println("Internet connected");
     // Print ESP32 Local IP Address
@@ -796,90 +704,89 @@ void setup()
     time(&now);
     // setenv("TZ", "GMT0BST,M3.5.0/01,M10.5.0/02", 1);
     // tzset();
-    WiFi.localIP().toString().toCharArray(C_ip_adress, 14); // Convert IP adress to String then to Char Array
-    WiFi.macAddress().toCharArray(C_mac_adr, 18);           // Convert Mac adr to Char array
+    WiFi.localIP().toString().toCharArray(
+        C_ip_adress, 14); // Convert IP adress to String then to Char Array
+    WiFi.macAddress().toCharArray(C_mac_adr,
+                                  18); // Convert Mac adr to Char array
     Serial.write("Wifi connected");
   }
-  //check SPIFFS
-  if (!SPIFFS.begin(true))
-  {
+  // check SPIFFS
+  if (!SPIFFS.begin(true)) {
     Serial.println("An Error has occurred while mounting SPIFFS");
     ESP.restart();
-  }
-  else
-  {
+  } else {
     delay(500);
     Serial.println("SPIFFS mounted successfully");
   }
-  init_server();                       //start server
-  client.setServer(mqtt_server, 1883); //start mqtt
+  init_server();                       // start server
+  client.setServer(mqtt_server, 1883); // start mqtt
   client.setCallback(callback);
-  strcat(C_topic_t_Hostname, C_idHostname);        //topic preparation
-  strcat(C_topic_h_Hostname, C_idHostname);        //topic preparation
-  strcat(C_topic_dallas_t_Hostname, C_idHostname); //topic preparation
-  strcat(C_topic_ph_Hostname, C_idHostname);       //topic preparation
+  strcat(C_topic_t_Hostname, C_idHostname);        // topic preparation
+  strcat(C_topic_h_Hostname, C_idHostname);        // topic preparation
+  strcat(C_topic_dallas_t_Hostname, C_idHostname); // topic preparation
+  strcat(C_topic_ph_Hostname, C_idHostname);       // topic preparation
   strcat(C_topic_ph_Vol, C_idHostname);
   strcat(C_topic_adc, C_idHostname);
 
-  //Init pin mode
+  // Init pin mode
   pinMode(Ledboard, OUTPUT);
-  //OTA init
+  // OTA init
   init_OTA();
   timerAlarmEnable(timer);
-  adcSetting();
+  // Initialise the first sensor value store. We want this to be the simple
+  // average of the last 10 values.
+  // Note: The more values you store, the more memory will be used.
+  mySensor.begin(SMOOTHED_AVERAGE, 50);
+  analogReadResolution(10);
+  adcAttachPin(phPin);
 }
 
-void loop()
-{
-  if (timer1s > 0)
-  {
+void loop() {
+
+  if (timer1s > 0) {
     timer1s = 0;
     checkConnection();
   }
-  if (!client.connected())
-  {
+  if (!client.connected()) {
     reconnect();
   }
   client.loop();
   ArduinoOTA.handle();
+  if (interruptCounter > 1) {
+    adcToVolt();
+  }
 
-  if (interruptCounter > 0)
-  {
+  if (interruptCounter >= 1000) {
     portENTER_CRITICAL(&timerMux);
     interruptCounter = 0;
     portEXIT_CRITICAL(&timerMux);
     timerCount++;
+
     writeFile(SPIFFS, "/timerCount.txt", itoa(timerCount, c_timerCount, 10));
     S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
     Int_timeCycle = S_timeCycle.toInt();
     flagEx = false;
-    if (digitalRead(ledPin) == HIGH)
-    {
+
+    if (digitalRead(ledPin) == HIGH) {
       digitalWrite(ledPin, LOW);
-    }
-    else
-    {
+    } else {
       digitalWrite(ledPin, HIGH);
     }
-
+    // analog.getRawValue();
     timer1s++;
   }
 
-  if (timerCount == Int_timeCycle)
-  {
-    if (flagEx == false)
-    {
+  if (timerCount == Int_timeCycle) {
+    if (flagEx == false) {
       dhtRead();
       dallasRead();
       phRead();
       flagEx = true;
       timerCount = 0;
+      mySensor.clear();
     }
-  }
-  else if (timerCount > Int_timeCycle)
-  {
-    if (flagEx == false)
-    {
+  } else if (timerCount > Int_timeCycle) {
+    if (flagEx == false) {
       flagEx = true;
       timerCount = 0;
     }
