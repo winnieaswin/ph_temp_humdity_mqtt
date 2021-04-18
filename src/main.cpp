@@ -736,9 +736,11 @@ void setup() {
   // Initialise the first sensor value store. We want this to be the simple
   // average of the last 10 values.
   // Note: The more values you store, the more memory will be used.
-  mySensor.begin(SMOOTHED_AVERAGE, 50);
+  mySensor.begin(SMOOTHED_AVERAGE, 10);
   analogReadResolution(10);
   adcAttachPin(phPin);
+  mySensor.clear();
+
 }
 
 void loop() {
@@ -783,7 +785,6 @@ void loop() {
       phRead();
       flagEx = true;
       timerCount = 0;
-      mySensor.clear();
     }
   } else if (timerCount > Int_timeCycle) {
     if (flagEx == false) {
