@@ -80,7 +80,7 @@ String S_offsetCal;
 float pHVol;
 float phVol1d;
 float phVol2d;
-String S_EqA, S_EqB;
+String S_EqA1, S_EqB1, S_EqA2, S_EqB2;
 char C_EqA[20], C_EqA1[20], C_EqA2[20], C_EqA3[20], C_EqB[20], C_EqB1[20],
     C_EqB2[20], C_EqB3[20];
 float EqA, EqA1, EqA2, EqA3, EqB, EqB1, EqB2, EqB3; // for equation
@@ -558,7 +558,7 @@ void adcToVolt() {
   mySensor.add(totalSum);
   smoothedSensorValueAvg = mySensor.get();
 
-  phVol = smoothedSensorValueAvg * 3.3 / 1023; // convertie in volt
+  phVol = smoothedSensorValueAvg * 3.3 / 4094; // convertie in volt
   // totalSum = 0;
   // if (analog.update()) {
   //   phVolFIR = float(analog.getValue() * 3.3 / 1023);
@@ -574,24 +574,44 @@ void phRead() {
     Serial.println(smoothedSensorValueAvg);
     Serial.print("pHVol :");
     Serial.println(phVol);
-    dtostrf(phVol, 2, 2, phVol_char);
+    dtostrf(phVol, 2, 4, phVol_char);
     writeFile(SPIFFS, "/phVol.txt", phVol_char);
     client.publish(C_topic_ph_Vol, phVol_char);
 
     S_offsetCal = readFile(SPIFFS, "/offsetCal.txt");
     f_offsetCal = S_offsetCal.toFloat();
 
-    S_EqA = readFile(SPIFFS, "/EqA.txt");
-    EqA = S_EqA.toFloat();
-    S_EqB = readFile(SPIFFS, "/EqB.txt");
-    EqB = S_EqB.toFloat();
+    S_phVol6_86 = readFile(SPIFFS, "/phVol6_86.txt");
+    F_phVol6_86 = S_phVol6_86.toFloat();
+    S_EqA1 = readFile(SPIFFS, "/EqA1.txt");
+    EqA1 = S_EqA1.toFloat();
+    S_EqB1 = readFile(SPIFFS, "/EqB1.txt");
+    EqB1 = S_EqB1.toFloat();
+    S_EqA2 = readFile(SPIFFS, "/EqA2.txt");
+    EqA2 = S_EqA2.toFloat();
+    S_EqB2 = readFile(SPIFFS, "/EqB2.txt");
+    EqB2 = S_EqB2.toFloat();
     S_addOffset = readFile(SPIFFS, "/addOffset.txt");
     F_addOffset = S_addOffset.toFloat();
 
-    phValue = EqA * phVol + EqB + f_offsetCal + F_addOffset;
+    // phValue = EqA * phVol + EqB + f_offsetCal + F_addOffset;
     // phValue2d = round(phValue * 10.0) / 10.0;
+    if (phVol > F_phVol6_86) {
+      phValue = EqA1 * phVol + EqB1 + f_offsetCal + F_addOffset;
+      Serial.println("graph acid");
+    } else {
+      Serial.println("graph akalike");
+      phValue = EqA2 * phVol + EqB2 + f_offsetCal + F_addOffset;
+    }
 
-    dtostrf(phValue, 2, 2, ph_char); // convertion float to Char
+    Serial.println("EqA1, EqA2, EqB1, EqB2 :");
+    Serial.println(EqA1);
+    Serial.println(EqA2);
+    Serial.println(EqB1);
+    Serial.println(EqB2);
+    Serial.println("F_phVol6_86 :");
+    Serial.println(F_phVol6_86);
+    dtostrf(phValue, 2, 4, ph_char); // convertion float to Char
     writeFile(SPIFFS, "/ph.txt", ph_char);
     client.publish(C_topic_ph_Hostname, ph_char);
   }
@@ -621,9 +641,9 @@ void phCalibrate() // equation y = ax+b with 3 points then average
   dtostrf(EqA2, 10, 10, C_EqA2); // convertion float to char
   writeFile(SPIFFS, "/EqA2.txt", C_EqA2);
 
-  EqA3 = (ph9_18 - ph4_01) / (F_phVol9_18 - F_phVol4_01);
-  dtostrf(EqA3, 10, 10, C_EqA3); // convertion float to char
-  writeFile(SPIFFS, "/EqA3.txt", C_EqA3);
+  // EqA3 = (ph9_18 - ph4_01) / (F_phVol9_18 - F_phVol4_01);
+  // dtostrf(EqA3, 10, 10, C_EqA3); // convertion float to char
+  // writeFile(SPIFFS, "/EqA3.txt", C_EqA3);
 
   EqB1 = ph4_01 - (EqA1 * F_phVol4_01);
   dtostrf(EqB1, 10, 10, C_EqB1); // convertion float to char
@@ -633,17 +653,17 @@ void phCalibrate() // equation y = ax+b with 3 points then average
   dtostrf(EqB2, 10, 10, C_EqB2); // convertion float to char
   writeFile(SPIFFS, "/EqB2.txt", C_EqB2);
 
-  EqB3 = ph9_18 - (EqA3 * F_phVol9_18);
-  dtostrf(EqB3, 10, 10, C_EqB3); // convertion float to char
-  writeFile(SPIFFS, "/EqB3.txt", C_EqB3);
+  // EqB3 = ph9_18 - (EqA3 * F_phVol9_18);
+  // dtostrf(EqB3, 10, 10, C_EqB3); // convertion float to char
+  // writeFile(SPIFFS, "/EqB3.txt", C_EqB3);
 
-  EqA = (EqA1 + EqA2 + EqA3) / 3;
-  dtostrf(EqA, 10, 10, C_EqA); // coFnvertion float to char
-  writeFile(SPIFFS, "/EqA.txt", C_EqA);
+  // EqA = (EqA1 + EqA2 + EqA3) / 3;
+  // dtostrf(EqA, 10, 10, C_EqA); // coFnvertion float to char
+  // writeFile(SPIFFS, "/EqA.txt", C_EqA);
 
-  EqB = (EqB1 + EqB2 + EqB3) / 3;
-  dtostrf(EqB, 10, 10, C_EqB); // coFnvertion float to char
-  writeFile(SPIFFS, "/EqB.txt", C_EqB);
+  // EqB = (EqB1 + EqB2 + EqB3) / 3;
+  // dtostrf(EqB, 10, 10, C_EqB); // coFnvertion float to char
+  // writeFile(SPIFFS, "/EqB.txt", C_EqB);
 }
 
 void checkConnection() {
@@ -737,10 +757,9 @@ void setup() {
   // average of the last 10 values.
   // Note: The more values you store, the more memory will be used.
   mySensor.begin(SMOOTHED_AVERAGE, 10);
-  analogReadResolution(10);
+  analogReadResolution(12);
   adcAttachPin(phPin);
   mySensor.clear();
-
 }
 
 void loop() {
