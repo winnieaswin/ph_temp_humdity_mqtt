@@ -22,6 +22,9 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <Wire.h>   //for BH1750
+#include <BH1750.h> //for BH1750
+
 // // filter FIR
 // #include <Arduino_Helpers.h>
 // #include <AH/Hardware/FilteredAnalog.hpp>
@@ -93,6 +96,12 @@ char C_addOffset;    // for additional offset
 String S_addOffset;
 float F_addOffset;
 
+const int rain3v3 = 27;
+const int rainSensor = 26;
+String rainStatus;
+char c_rainStatusH[8] = "1";
+char c_rainStatusL[8] = "0";
+
 #define DHTPIN 23     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22 // DHT 11
 DHT dht(DHTPIN, DHTTYPE);
@@ -115,6 +124,7 @@ DallasTemperature sensors(&oneWire);
 
 // timer interrupt
 volatile int interruptCounter;
+int timerCountRain;
 int timerCount; // test statement for each step in second
 char c_timerCount[8];
 boolean flagEx = false; // flag to excute 1 time the statement
@@ -145,6 +155,8 @@ char C_topic_ph_Hostname[40] = "esp32/ph/";
 char C_topic_ph_Vol[40] = "esp32/phVol/";
 char C_topic_ph_Vol2d[40] = "esp32/phVol2d/";
 char C_topic_adc[40] = "esp32/adc/";
+char C_topic_lux[40] = "esp32/lux/";
+char C_topic_rain[40] = "esp32/rain/";
 
 int Ledboard = 2;
 int mQtyFailCt = 5;
@@ -182,6 +194,11 @@ String S_timeCycle;
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
+
+////for BH1750
+BH1750 lightMeter(0x23);
+float lux;
+char C_lux[10];
 
 void adcToVolt();
 // SPIFFS read & write
@@ -290,7 +307,7 @@ String processor(const String &var) // display value on http
     S_offsetCal = readFile(SPIFFS, "/offsetCal.txt");
     return readFile(SPIFFS, "/offsetCal.txt");
   } else if (var == "timerCount") {
-    return readFile(SPIFFS, "/timerCount.txt");
+    return String(timerCount);
   } else if (var == "phSensor") {
     S_phSensor = readFile(SPIFFS, "/phSensor.txt");
     return readFile(SPIFFS, "/phSensor.txt");
@@ -320,6 +337,10 @@ String processor(const String &var) // display value on http
     return readFile(SPIFFS, "/CalDate.txt");
   } else if (var == "addOffset") {
     return readFile(SPIFFS, "/addOffset.txt");
+  } else if (var == "lux") {
+    return String(lux);
+  } else if (var == "rainStatus") {
+    return rainStatus;
   }
 
   return String();
@@ -666,6 +687,30 @@ void phCalibrate() // equation y = ax+b with 3 points then average
   // writeFile(SPIFFS, "/EqB.txt", C_EqB);
 }
 
+void rainRead() {
+  if (digitalRead(rainSensor) == HIGH) {
+    Serial.println("rain sensor = Low");
+    rainStatus = "Low";
+    client.publish(C_topic_rain, c_rainStatusL);
+
+  } else {
+    Serial.println("rain sensor = High");
+    rainStatus = "High";
+    client.publish(C_topic_rain, c_rainStatusH);
+  }
+}
+
+void lightRead() {
+  if (lightMeter.measurementReady()) {
+    lux = lightMeter.readLightLevel();
+    dtostrf(lux,5,2,C_lux);
+    client.publish(C_topic_lux,C_lux);
+    Serial.print("Light: ");
+    Serial.print(lux);
+    Serial.println(" lx");
+  }
+}
+
 void checkConnection() {
   if (WiFi.status() == WL_CONNECTED) {
     delay(10);
@@ -690,6 +735,7 @@ void checkConnection() {
 void IRAM_ATTR onTimer() {
   portENTER_CRITICAL_ISR(&timerMux);
   interruptCounter++;
+  timerCountRain++;
   portEXIT_CRITICAL_ISR(&timerMux);
 }
 
@@ -698,6 +744,9 @@ void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disable brownout detector
 
   pinMode(ledPin, OUTPUT);
+  pinMode(rain3v3, OUTPUT);
+  pinMode(rainSensor, INPUT_PULLDOWN);
+  digitalWrite(rain3v3, HIGH);
   Serial.begin(115200);
   sensors.begin(); // dallas start
   dht.begin();
@@ -747,6 +796,9 @@ void setup() {
   strcat(C_topic_ph_Hostname, C_idHostname);       // topic preparation
   strcat(C_topic_ph_Vol, C_idHostname);
   strcat(C_topic_adc, C_idHostname);
+  strcat(C_topic_lux, C_idHostname);
+  strcat(C_topic_rain, C_idHostname);
+
 
   // Init pin mode
   pinMode(Ledboard, OUTPUT);
@@ -760,6 +812,13 @@ void setup() {
   analogReadResolution(12);
   adcAttachPin(phPin);
   mySensor.clear();
+
+  Wire.begin();
+  if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
+    Serial.println(F("BH1750 Advanced begin"));
+  } else {
+    Serial.println(F("Error initialising BH1750"));
+  }
 }
 
 void loop() {
@@ -777,13 +836,13 @@ void loop() {
     adcToVolt();
   }
 
+
   if (interruptCounter >= 1000) {
     portENTER_CRITICAL(&timerMux);
     interruptCounter = 0;
     portEXIT_CRITICAL(&timerMux);
     timerCount++;
-
-    writeFile(SPIFFS, "/timerCount.txt", itoa(timerCount, c_timerCount, 10));
+    rainRead();
     S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
     Int_timeCycle = S_timeCycle.toInt();
     flagEx = false;
@@ -802,6 +861,7 @@ void loop() {
       dhtRead();
       dallasRead();
       phRead();
+      lightRead();
       flagEx = true;
       timerCount = 0;
     }
