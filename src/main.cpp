@@ -155,6 +155,7 @@ char strftime_buf[64];              // time for webserver
 char C_ip_adress[14] = "IP adress"; // for Mqtt ID
 char C_mac_adr[18];                 // for Mqtt ID
 char C_idHostname[40];
+char subscribeTopic[40] = "esp32/status/"; // for subscribe Topic
 char C_topic_t_Hostname[40] = "esp32/temp/";
 char C_topic_h_Hostname[40] = "esp32/hum/";
 char C_topic_dallas_t_Hostname[40] = "esp32/dallas_t/";
@@ -420,6 +421,10 @@ String processor(const String &var) // display value on http
   {
     return rainStatus;
   }
+  else if (var == "roofStatus")
+  {
+    return roofStatus;
+  }
 
   return String();
 }
@@ -535,35 +540,6 @@ void init_server() // Server init
   server.begin();
 } // end Server init
 // call back mqtt
-void callback(char *topic, byte *payload, unsigned int length)
-{
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  String messageTemp;
-  for (int i = 0; i < length; i++)
-  {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-  // Switch on the LED if an 1 was received as first character
-  if (String(topic) == "esp32/status")
-  {
-    rainRead();
-    roofRead();
-    Serial.print("Changing output to ");
-    if (messageTemp == "on")
-    {
-      Serial.println("on");
-      digitalWrite(Ledboard, HIGH);
-    }
-    else if (messageTemp == "off")
-    {
-      Serial.println("off");
-      digitalWrite(Ledboard, LOW);
-    }
-  }
-}
 
 void reconnect() // reconnect mqtt server
 {
@@ -581,7 +557,7 @@ void reconnect() // reconnect mqtt server
       // Once connected, publish an announcement...
       client.publish("outTopic", "hello world");
       // ... and resubscribe
-      client.subscribe("esp32/output");
+      client.subscribe(subscribeTopic);
       mQtyFailCt = 5;
     }
     else if (mQtyFailCt == 0)
@@ -819,7 +795,7 @@ void phCalibrate() // equation y = ax+b with 3 points then average
 
 void rainRead()
 {
-  if (digitalRead(rainSensor) == HIGH)
+  if (digitalRead(rainSensor) == LOW)
   {
     Serial.println("rain sensor = Low");
     rainStatus = "Low";
@@ -835,7 +811,7 @@ void rainRead()
 
 void roofRead()
 {
-  if (digitalRead(roofSensor) == HIGH)
+  if (digitalRead(roofSensor) == LOW)
   {
     Serial.println("roof sensor = Low");
     roofStatus = "Low";
@@ -844,7 +820,7 @@ void roofRead()
   else
   {
     Serial.println("roof sensor = High");
-    rainStatus = "High";
+    roofStatus = "High";
     client.publish(C_topic_roof, c_roofStatusH);
   }
 }
@@ -861,7 +837,40 @@ void lightRead()
     Serial.println(" lx");
   }
 }
+void callback(char *topic, byte *payload, unsigned int length)
+{
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  String messageTemp;
+  for (int i = 0; i < length; i++)
+  {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+  // Switch on the LED if an 1 was received as first character
+  if (String(topic) == subscribeTopic)
+  {
 
+    Serial.println("Changing output to : ");
+    if (messageTemp == "on")
+    {
+      Serial.println("message mqtt on");
+      digitalWrite(Ledboard, HIGH);
+    }
+    else if (messageTemp == "off")
+    {
+      Serial.println("message mqtt off");
+      digitalWrite(Ledboard, LOW);
+    }
+    else if (messageTemp = "getInfo")
+    {
+      rainRead();
+      roofRead();
+      Serial.println("status read");
+    }
+  }
+}
 void checkConnection()
 {
   if (WiFi.status() == WL_CONNECTED)
@@ -968,6 +977,7 @@ void setup()
   strcat(C_topic_lux, C_idHostname);
   strcat(C_topic_rain, C_idHostname);
   strcat(C_topic_roof, C_idHostname);
+  strcat(subscribeTopic, C_idHostname); // top for subscrive
 
   // Init pin mode
   pinMode(Ledboard, OUTPUT);
@@ -1018,7 +1028,8 @@ void loop()
     interruptCounter = 0;
     portEXIT_CRITICAL(&timerMux);
     timerCount++;
-
+    rainRead();
+    roofRead();
     S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
     Int_timeCycle = S_timeCycle.toInt();
     flagEx = false;
@@ -1043,8 +1054,6 @@ void loop()
       dallasRead();
       phRead();
       lightRead();
-      rainRead();
-      roofRead();
       flagEx = true;
       timerCount = 0;
     }
