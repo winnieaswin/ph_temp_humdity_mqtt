@@ -1028,8 +1028,7 @@ void loop()
     interruptCounter = 0;
     portEXIT_CRITICAL(&timerMux);
     timerCount++;
-    rainRead();
-    roofRead();
+
     S_timeCycle = readFile(SPIFFS, "/timeCycle.txt");
     Int_timeCycle = S_timeCycle.toInt();
     flagEx = false;
@@ -1054,6 +1053,8 @@ void loop()
       dallasRead();
       phRead();
       lightRead();
+      rainRead();
+      roofRead();
       flagEx = true;
       timerCount = 0;
     }
