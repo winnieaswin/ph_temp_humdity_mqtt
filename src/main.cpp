@@ -795,11 +795,11 @@ void phCalibrate() // equation y = ax+b with 3 points then average
 
 void rainRead()
 {
-  if (digitalRead(rainSensor) == LOW)
+  if (digitalRead(rainSensor) == HIGH) //Rain sensor relay NC inverse H and Low
   {
     Serial.println("rain sensor = Low");
     rainStatus = "Low";
-    client.publish(C_topic_rain, c_rainStatusL);
+    client.publish(C_topic_rain, c_rainStatusL); 
   }
   else
   {
