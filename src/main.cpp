@@ -108,6 +108,11 @@ String roofStatus;
 char c_roofStatusH[8] = "1";
 char c_roofStatusL[8] = "0";
 
+const int rainanalog = 35;
+char c_rainanalog[8];
+String s_rainanalog; 
+float f_rainanalog;
+
 #define DHTPIN 23     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22 // DHT 11
 DHT dht(DHTPIN, DHTTYPE);
@@ -166,6 +171,7 @@ char C_topic_adc[40] = "esp32/adc/";
 char C_topic_lux[40] = "esp32/lux/";
 char C_topic_rain[40] = "esp32/rain/";
 char C_topic_roof[40] = "esp32/roof/";
+char C_topic_rainanalog[40] ="esp32/rainanalog/";
 
 int Ledboard = 2;
 int mQtyFailCt = 5;
@@ -424,6 +430,10 @@ String processor(const String &var) // display value on http
   else if (var == "roofStatus")
   {
     return roofStatus;
+  }
+  else if (var == "rainanalog")
+  {
+    return String(f_rainanalog);
   }
 
   return String();
@@ -811,7 +821,7 @@ void rainRead()
 
 void roofRead()
 {
-  if (digitalRead(roofSensor) == LOW)
+  if (digitalRead(roofSensor) == HIGH)
   {
     Serial.println("roof sensor = Low");
     roofStatus = "Low";
@@ -824,6 +834,15 @@ void roofRead()
     client.publish(C_topic_roof, c_roofStatusH);
   }
 }
+
+void rainAnalogRead()
+{
+    f_rainanalog = analogRead(rainanalog);
+    dtostrf(f_rainanalog,5,2,c_rainanalog);
+    client.publish(C_topic_rainanalog, c_rainanalog);
+
+}
+
 
 void lightRead()
 {
@@ -922,7 +941,7 @@ void setup()
   sensors.begin(); // dallas start
   dht.begin();
   // EEPROM.begin(EEPROM_SIZE);
-  // adcAttachPin(34);
+  
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, &onTimer, true);
   timerAlarmWrite(timer, 1000, true);
@@ -978,6 +997,7 @@ void setup()
   strcat(C_topic_rain, C_idHostname);
   strcat(C_topic_roof, C_idHostname);
   strcat(subscribeTopic, C_idHostname); // top for subscrive
+  strcat(C_topic_rainanalog,C_idHostname);
 
   // Init pin mode
   pinMode(Ledboard, OUTPUT);
@@ -990,6 +1010,7 @@ void setup()
   mySensor.begin(SMOOTHED_AVERAGE, 10);
   analogReadResolution(12);
   adcAttachPin(phPin);
+  adcAttachPin(rainanalog);
   mySensor.clear();
 
   Wire.begin();
@@ -1055,6 +1076,7 @@ void loop()
       lightRead();
       rainRead();
       roofRead();
+      rainAnalogRead();
       flagEx = true;
       timerCount = 0;
     }
